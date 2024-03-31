@@ -16,7 +16,7 @@ typedef bool (*RenderFunction)(int16_t x, int16_t y, uint16_t w, uint16_t h, uin
 class JpgDecoder {
 private:
   static FIL file;
-	static FATFS fs;
+  static FATFS fs;
   static const uint8_t *data;
 
   static uint32_t dataIdx;

@@ -264,6 +264,27 @@ void ILI9341::writeChar(uint16_t x, uint16_t y, char ch, FontDef font, uint16_t 
 void ILI9341::writeString(uint16_t x, uint16_t y, const char* str, FontDef font, uint16_t color, uint16_t bgcolor) {
     select();
     while(*str) {
+        if(*str == '\n') {
+            x = 0;
+            y += font.height;
+            if(y + font.height >= ILI9341_HEIGHT) {
+                break;
+            }
+            str++;
+            continue;
+        }
+        if(*str == '\t') {
+#define TAB_SPACE 2
+            // Handle tab character
+            // Calculate the number of spaces needed to reach the next tab position
+            int spaces = (x + font.width * TAB_SPACE) / (font.width * TAB_SPACE) * (font.width * TAB_SPACE) - x;
+            for(int i = 0; i < spaces - 5; i++) {
+                writeChar(x, y, ' ', font, color, bgcolor);
+                x += font.width;
+            }
+            str++;
+            continue;
+        }
         if(x + font.width >= ILI9341_WIDTH) {
             x = 0;
             y += font.height;

@@ -324,7 +324,7 @@ void USART1_IRQHandler(void)
   * @brief This function handles SDIO global interrupt.
   */
 void SDIO_IRQHandler(void)
-{
+ {
   /* USER CODE BEGIN SDIO_IRQn 0 */
 
   /* USER CODE END SDIO_IRQn 0 */

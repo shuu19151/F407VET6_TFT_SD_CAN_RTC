@@ -30,6 +30,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <iostream>
+#include <sstream>
 #include "../Lib/DS3231/DS3231.h"
 #include "../Lib/ILI9341/ILI9341.h"
 #include "../Lib/ILI9341/fonts.h"
@@ -37,16 +38,35 @@
 #include "../Lib/JPGEdecoder/jpgDecoder.h"
 #include "../Lib/SerialDebug/UartRingBuffer.h"
 #include "../Lib/Button/Button.h"
+#include "../Lib/mySDCard/mySDCard.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum {
+  P_FREEZE,
+  P_OK,
+  P_BACK,
+  P_UP,
+  P_DOWN,
+} user_move_t;
+
+typedef enum {
+  APP_SELECTING,
+  APP_ANOTHER,
+  APP_SDCARD,
+} application_t;
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define zDEBUG(msg) do { Uart_sendstring(((std::string(msg)) + "\n").c_str()); } while(0)
+#define POINTER_CUR_POSITION ((Font_11x18.height * rowIndex) + 4)
+#define POINTER_PREV_POSITION ((Font_11x18.height * prevRowIndex) + 4)
+#define UPDATE_POINTER  do {lcd->writeString(0, POINTER_PREV_POSITION, "  ", Font_11x18, ILI9341_WHITE, ILI9341_BLUE);  \
+                        lcd->writeString(0, POINTER_CUR_POSITION, "->", Font_11x18, ILI9341_WHITE, ILI9341_BLUE);       \
+                        } while(0)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -57,149 +77,383 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-DS3231* rtc;
+uint8_t rowIndex = 1;
+uint8_t prevRowIndex = rowIndex;
+SDCard* file;
 ILI9341* lcd;
 JpgDecoder* jpgDec;
-Time_t* time;
 Button *btn_ok, *btn_up, *btn_down, *btn_left, *btn_right, *btn_back;
 
-uint32_t TxMailbox;
+/* Application selection ---------------------------------------------------------------*/
+application_t eApp = APP_SELECTING;
 
-uint8_t TxData[8] = {0};
+/* File handle ---------------------------------------------------------------*/
+std::string filePath = "";
+uint8_t maxPage;
+uint8_t lastFileIndex;
+uint8_t page = 1;
+
+/* Text handle ---------------------------------------------------------------*/
+std::string textFromFile;
+uint8_t totalTextLine;
+uint8_t startTextLine = 1;
+uint8_t endTextLine = 12;
+
+/* User moves & files handle -------------------------------------------------*/
+user_move_t eUserMove = P_FREEZE;
+file_type_t fileType = FTYP_DIR;
+std::string selectedEntry;
+bool buttonPressed = false;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+/* USER CODE END PFP */
 
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
 bool renderLCD(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   if(y>=lcd->height()) return 0; // 0 - to stop decoding
   lcd->drawImage(x, y, w, h, bitmap);
   return 1; // 1 - to decode next block
 }
 
-/* USER CODE END PFP */
+void vUpdateLCDToSelectedDir(bool update) {
+  if(update) {
+    lcd->fillScreen(ILI9341_BLUE);
+    std::string data;
+    file->listEntryOfDir(filePath.c_str());
+    file->listFilesOnPage(1, data);
+    lcd->writeString(0, 4, data.c_str(), Font_11x18, ILI9341_WHITE, ILI9341_BLUE);
+    zDEBUG(data);
+  }
+}
 
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-void button_cb(uint8_t id, Button_event_state_t e) {
+void vUpdateLCDToNextPage(bool update) {
+  if(update) {
+    lcd->fillScreen(ILI9341_BLUE);
+    std::string data;
+    file->listFilesOnPage(page, data);
+    lcd->writeString(0, 4, data.c_str(), Font_11x18, ILI9341_WHITE, ILI9341_BLUE);
+  }
+}
+
+file_type_t vPointerSDFile(user_move_t& um) {
+  uint8_t prevRowIndex = rowIndex;
+  bool updateLCD = false;
+  switch(um) {
+    case P_FREEZE: return FTYP_DIR;
+    case P_BACK: {
+      if(filePath != "") {
+        filePath = filePath.substr(0, filePath.find_last_of('/'));
+        file->getPagesAndLastRow(filePath.c_str(), maxPage, lastFileIndex);
+        vUpdateLCDToSelectedDir(true);
+        rowIndex = 1;
+        page = 1;
+        UPDATE_POINTER;
+      }
+      else {
+        eApp = APP_SELECTING;
+         return FTYP_DIR;
+      }
+    } break;
+    case P_UP: {
+      if(rowIndex == 1) {
+        if(1 == maxPage) {
+          rowIndex = lastFileIndex;
+        }
+        else {
+          page--;
+          if(page == 0) {
+            page = maxPage;
+            rowIndex = lastFileIndex;
+          } else rowIndex = 12;
+          updateLCD = true;
+        }
+      } else rowIndex--;
+    } break;
+    case P_DOWN: {
+      if((1 == maxPage) && (rowIndex == lastFileIndex)) {
+        rowIndex = 1;
+      }
+      else if((page == maxPage) && (rowIndex == lastFileIndex)) {
+        rowIndex = 1;
+        page = 1;
+        updateLCD = true;
+      }
+      else if(rowIndex == 12) {
+        rowIndex = 1;
+        page++;
+        if(page > maxPage) page = 1;
+        updateLCD = true;
+      } else rowIndex++;
+    } break;
+    case P_OK: {
+      selectedEntry.clear();
+      selectedEntry += filePath; // include the path
+      fileType = file->checkSelectedFileType(rowIndex, selectedEntry);
+      // zDEBUG(selectedEntry);
+      um = P_FREEZE;
+      if(fileType == FTYP_DIR) {
+        rowIndex = 1;
+        page = 1;
+        std::string rawDir;
+        for(auto c : selectedEntry) {
+        	if(c != '[' && c != ']') {
+        		rawDir += c;
+        	}
+        }
+        filePath.clear();
+        filePath = rawDir;
+        file->getPagesAndLastRow(filePath.c_str(), maxPage, lastFileIndex);
+        vUpdateLCDToSelectedDir(true);
+        UPDATE_POINTER;
+      }
+      return fileType;
+    }
+  }
+  zDEBUG(std::to_string(rowIndex));
+  vUpdateLCDToNextPage(updateLCD);
+  UPDATE_POINTER;
+  um = P_FREEZE;
+  return FTYP_DIR;
+}
+
+void vHandleFileBrowse(user_move_t um) {
+  switch(fileType) {
+    case FTYP_DIR: { // if user is browsing directory
+      switch(vPointerSDFile(um)) {
+        case FTYP_DIR: {
+          // vPointerSDFile will handle browsing directory
+          return;
+        }
+        case FTYP_TXT: { //if user select text file
+          textFromFile.clear();
+          totalTextLine = 0;
+          file->readTextFromFile(selectedEntry, textFromFile, 1024);
+          if(textFromFile.size() > 0) {
+            std::stringstream ss(textFromFile);
+            std::string line;
+            while(getline(ss, line)) {
+              totalTextLine++;
+            }
+            lcd->fillScreen(ILI9341_BLUE);
+            lcd->writeString(0, 4, textFromFile.c_str(), Font_11x18, ILI9341_WHITE, ILI9341_BLUE);
+          }
+        } break;
+        case FTYP_JPG: {
+          jpgDec->show(0, 0, selectedEntry.c_str());
+        } break;
+      }
+    }
+    break;
+    case FTYP_TXT: { // if user is reading text file
+      switch(um) {
+        case P_OK:      break;
+        case P_FREEZE:  break;
+        case P_UP: {
+          if(startTextLine > 1) {
+            startTextLine-=12;
+            endTextLine-=12;
+            std::stringstream ss(textFromFile);
+            std::string line;
+            std::string showText;
+            uint8_t lineCount = 0;
+            while(getline(ss, line) && lineCount < endTextLine) {
+              if(lineCount >= startTextLine - 1) {
+                showText += line + "\n";
+              }
+              lineCount++;
+            }
+            lcd->fillScreen(ILI9341_BLUE);
+            lcd->writeString(0, 4, showText.c_str(), Font_11x18, ILI9341_WHITE, ILI9341_BLUE);
+          }
+        } break;
+        case P_DOWN: {
+          if((totalTextLine > 12) && (endTextLine <= totalTextLine)) { // If text has more lines than capacity of screen
+            startTextLine+=12;
+            endTextLine+=12;
+            std::stringstream ss(textFromFile);
+            std::string line;
+            std::string showText;
+            uint8_t lineCount = 0;
+            while(getline(ss, line) && lineCount < endTextLine) {
+              if(lineCount >= startTextLine - 1) {
+                showText += line + "\n";
+              }
+              lineCount++;
+            }
+            lcd->fillScreen(ILI9341_BLUE);
+            lcd->writeString(0, 4, showText.c_str(), Font_11x18, ILI9341_WHITE, ILI9341_BLUE);
+          }
+        } break;
+        case P_BACK: {
+          fileType = FTYP_DIR;
+          startTextLine = 1;
+          endTextLine = 12;
+          vUpdateLCDToNextPage(true);
+          UPDATE_POINTER;
+          break;
+        }
+      }
+    }
+    break;
+    case FTYP_JPG: { // if user is viewing jpg file
+      switch(um) {
+        case P_OK:      break;
+        case P_FREEZE:  break;
+        case P_UP:      break;
+        case P_DOWN:    break;
+        case P_BACK: {
+          fileType = FTYP_DIR;
+          vUpdateLCDToNextPage(true);
+          UPDATE_POINTER;
+          break;
+        }
+      }
+    }
+    break;
+  }
+}
+
+void buttonCb(uint8_t id, Button_event_state_t e) {
 	if(id == btn_ok->buttonId) {
 		switch(e) {
-		case BUTTON_PRESSED:
-			Uart_sendstring("Button OK pressed!\n");
-			break;
 		case BUTTON_RELEASED:
-			Uart_sendstring("Button OK released!\n");
-      Uart_sendstring("Showing image 08.jpg\n");
-      jpgDec->show(0, 0, "08.jpg");
-			break;
-		case BUTTON_CLICKED:
-			Uart_sendstring("Button OK clicked!\n");
-			break;
-		case BUTTON_PRESSED_LONG:
-			Uart_sendstring("Button OK pressed long!\n");
+			zDEBUG("Button OK released!");
+      buttonPressed = true;
+      eUserMove = P_OK;
 			break;
 		default: break;
 		}
 	}
-	if(id == btn_up->buttonId) {
+	else if(id == btn_up->buttonId) {
 		switch(e) {
-		case BUTTON_PRESSED:
-			Uart_sendstring("Button UP pressed!\n");
-			break;
 		case BUTTON_RELEASED:
-			Uart_sendstring("Button UP released!\n");
-      Uart_sendstring("Showing image 07.jpg\n");
-      jpgDec->show(0, 0, "07.jpg");
-			break;
-		case BUTTON_CLICKED:
-			Uart_sendstring("Button UP clicked!\n");
-			break;
-		case BUTTON_PRESSED_LONG:
-			Uart_sendstring("Button UP pressed long!\n");
+      zDEBUG("Button UP released!");
+      buttonPressed = true;
+      eUserMove = P_UP;
 			break;
 		default: break;
 		}
 	}
-	if(id == btn_down->buttonId) {
+	else if(id == btn_down->buttonId) {
 		switch(e) {
-		case BUTTON_PRESSED:
-			Uart_sendstring("Button DOWN pressed!\n");
-			break;
 		case BUTTON_RELEASED:
-			Uart_sendstring("Button DOWN released!\n");
-      Uart_sendstring("Showing image 06.jpg\n");
-      jpgDec->show(0, 0, "06.jpg");
-			break;
-		case BUTTON_CLICKED:
-			Uart_sendstring("Button DOWN clicked!\n");
-			break;
-		case BUTTON_PRESSED_LONG:
-			Uart_sendstring("Button DOWN pressed long!\n");
+      zDEBUG("Button DOWN released!");
+      buttonPressed = true;
+      eUserMove = P_DOWN;
 			break;
 		default: break;
 		}
 	}
-  if(id == btn_left->buttonId) {
+  else if(id == btn_back->buttonId) {
     switch(e) {
-    case BUTTON_PRESSED:
-      Uart_sendstring("Button LEFT pressed!\n");
-      break;
     case BUTTON_RELEASED:
-      Uart_sendstring("Button LEFT released!\n");
-      Uart_sendstring("Showing image 05.jpg\n");
-      jpgDec->show(0, 0, "05.jpg");
-      break;
-    case BUTTON_CLICKED:
-      Uart_sendstring("Button LEFT clicked!\n");
-      break;
-    case BUTTON_PRESSED_LONG:
-      Uart_sendstring("Button LEFT pressed long!\n");
+      zDEBUG("Button BACK released!");
+      buttonPressed = true;
+      eUserMove = P_BACK;
       break;
     default: break;
     }
   }
-  if(id == btn_right->buttonId) {
+  else if(id == btn_left->buttonId) {
     switch(e) {
-    case BUTTON_PRESSED:
-      Uart_sendstring("Button RIGHT pressed!\n");
-      break;
     case BUTTON_RELEASED:
-      Uart_sendstring("Button RIGHT released!\n");
-      Uart_sendstring("Showing image 04.jpg\n");
-      jpgDec->show(0, 0, "04.jpg");
-      break;
-    case BUTTON_CLICKED:
-      Uart_sendstring("Button RIGHT clicked!\n");
-      break;
-    case BUTTON_PRESSED_LONG:
-      Uart_sendstring("Button RIGHT pressed long!\n");
+      zDEBUG("Button LEFT released!");
+      buttonPressed = true;
       break;
     default: break;
     }
   }
-  if(id == btn_back->buttonId) {
+  else if(id == btn_right->buttonId) {
     switch(e) {
-    case BUTTON_PRESSED:
-      Uart_sendstring("Button BACK pressed!\n");
-      break;
     case BUTTON_RELEASED:
-      Uart_sendstring("Button BACK released!\n");
-      Uart_sendstring("Showing image 03.jpg\n");
-      jpgDec->show(0, 0, "03.jpg");
-      break;
-    case BUTTON_CLICKED:
-      Uart_sendstring("Button BACK clicked!\n");
-      break;
-    case BUTTON_PRESSED_LONG:
-      Uart_sendstring("Button BACK pressed long!\n");
+      zDEBUG("Button RIGHT released!");
+      buttonPressed = true;
       break;
     default: break;
     }
   }
 }
 
+void vShowMenu(void) {
+  lcd->fillScreen(ILI9341_BLUE);
+  std::string menu = "---------SELECT APP----------\n  1. Another app\n  2. SDCard\n  3. Exit";
+  lcd->writeString(0, 4, menu.c_str(), Font_11x18, ILI9341_WHITE, ILI9341_BLUE);
+  rowIndex = 1;
+  UPDATE_POINTER;
+}
+
+void vPointerSelectApp(user_move_t& um) {
+  uint8_t prevRowIndex = rowIndex;
+  switch(um) {
+    case P_FREEZE: return;
+    case P_BACK: {
+      // eApp = APP_SELECTING;
+      // vSelectingApp();
+    } break;
+    case P_UP: {
+      if(rowIndex == 1) rowIndex = 3;
+      else rowIndex--;
+    } break;
+    case P_DOWN: {
+      if(rowIndex == 3) rowIndex = 1;
+      else rowIndex++;
+    } break;
+    case P_OK: {
+      switch(rowIndex) {
+        case 1: {
+          eApp = APP_ANOTHER;
+          return;
+        }
+        case 2: {
+          eApp = APP_SDCARD;
+          return;
+        }
+        case 3: {
+          lcd->fillScreen(ILI9341_BLUE);
+          lcd->writeString(0, 4, "Exit", Font_11x18, ILI9341_WHITE, ILI9341_BLUE);
+          while(1);
+        } break;
+      }
+    } break;
+  }
+  UPDATE_POINTER;
+  um = P_FREEZE;
+}
+
+void vAppSDCard(void) {
+  file = new SDCard();
+  file->getPagesAndLastRow(filePath.c_str(), maxPage, lastFileIndex);
+  { // debug
+    std::string data;
+    file->scanFiles(filePath.c_str(), data);
+    zDEBUG(data);
+  }
+  vUpdateLCDToSelectedDir(true);
+  UPDATE_POINTER;
+
+  { // debug
+    std::string data;
+    file->getFilesMap(data);
+    zDEBUG(data);
+  }
+  while(eApp == APP_SDCARD) {
+    btn_left->handleButton();
+    btn_ok->handleButton();
+    btn_up->handleButton();
+    btn_down->handleButton();
+    btn_right->handleButton();
+    btn_back->handleButton();
+    if(buttonPressed) {
+      buttonPressed = false;
+      vHandleFileBrowse(eUserMove);
+    }
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -237,89 +491,61 @@ extern "C" int main(void) {
   MX_FATFS_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-
   Ringbuffer_init();
-  HAL_CAN_Start(&hcan1);
-  HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
-  TxHeader.DLC = 8;
-  TxHeader.ExtId = 0;
-  TxHeader.IDE = CAN_ID_STD;
-  TxHeader.RTR = CAN_RTR_DATA;
-  TxHeader.StdId = 0x407;
-  TxHeader.TransmitGlobalTime = DISABLE;
-
-  time = new Time_t {0};
-  rtc = new DS3231(hi2c1);
   lcd = new ILI9341(hspi2,
 		  SPI2_CS_GPIO_Port, SPI2_CS_Pin,
 		  SPI2_DC_GPIO_Port, SPI2_DC_Pin,
 		  SPI2_RST_GPIO_Port, SPI2_RST_Pin);
   jpgDec = new JpgDecoder(renderLCD);
+  jpgDec->setSwapBytes(true);
 
-  btn_ok = new Button(GPIOE, PE4_KEY_2_Pin, BUTTON_ACTIVE_LOW, button_cb);
-  btn_up = new Button(GPIOE, PE6_KEY_4_Pin, BUTTON_ACTIVE_LOW, button_cb);
-  btn_down = new Button(GPIOE, PE3_KEY_1_Pin, BUTTON_ACTIVE_LOW, button_cb);
-  btn_left = new Button(GPIOE, PE2_KEY_0_Pin, BUTTON_ACTIVE_LOW, button_cb);
-  btn_right = new Button(GPIOE, PE5_KEY_3_Pin, BUTTON_ACTIVE_LOW, button_cb);
-  btn_back = new Button(GPIOB, PB9_KEY_5_Pin, BUTTON_ACTIVE_LOW, button_cb);
+  btn_ok = new Button(GPIOE, PE4_KEY_2_Pin, BUTTON_ACTIVE_LOW, buttonCb);
+  btn_up = new Button(GPIOE, PE6_KEY_4_Pin, BUTTON_ACTIVE_LOW, buttonCb);
+  btn_down = new Button(GPIOE, PE3_KEY_1_Pin, BUTTON_ACTIVE_LOW, buttonCb);
+  btn_left = new Button(GPIOE, PE2_KEY_0_Pin, BUTTON_ACTIVE_LOW, buttonCb);
+  btn_right = new Button(GPIOE, PE5_KEY_3_Pin, BUTTON_ACTIVE_LOW, buttonCb);
+  btn_back = new Button(GPIOB, PB9_KEY_5_Pin, BUTTON_ACTIVE_LOW, buttonCb);
 
   lcd->init();
-  lcd->fillScreen(ILI9341_BLACK);
-
-  jpgDec->setJpgScale(2);
-  jpgDec->setSwapBytes(true);
+  lcd->fillScreen(ILI9341_BLUE);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  jpgDec->show(0, 0, "08.jpg");
-  jpgDec->show(lcd->height()/2 + 40, 0, "07.jpg");
-  jpgDec->show(0, lcd->width()/2 - 40, "03.jpg");
-  jpgDec->show(lcd->height()/2 + 40, lcd->width()/2 - 40, "05.jpg");
-  jpgDec->setJpgScale(1);
-  uint8_t i = 10;
-  uint8_t j = 1;
-  uint32_t interval = 0;
+
+
   while (1) {
   /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */
-	  btn_left->handleButton();
-	  btn_ok->handleButton();
-	  btn_up->handleButton();
-	  btn_down->handleButton();
-    btn_right->handleButton();
-    btn_back->handleButton();
+    vShowMenu();
+    /* User have to select the application first*/
+    while(eApp == APP_SELECTING) {
+      btn_left->handleButton();
+      btn_ok->handleButton();
+      btn_up->handleButton();
+      btn_down->handleButton();
+      btn_right->handleButton();
+      btn_back->handleButton();
+      if(buttonPressed) {
+        buttonPressed = false;
+        vPointerSelectApp(eUserMove);
+      }
+    }
 
-    if(HAL_GetTick() - interval >= 1000) {
-    	interval = HAL_GetTick();
-        rtc->getDateTime(time);
-    	std::string time_str;
-    	time_str += "Date Time: ";
-    	time_str += std::to_string(time->Hour);
-    	time_str += " : ";
-    	time_str += std::to_string(time->Min);
-    	time_str += " : ";
-    	time_str += std::to_string(time->Sec);
-    	TxData[0] = ++i;
-    	TxData[1] = ++j;
-    	HAL_CAN_AddTxMessage(&hcan1, &TxHeader, TxData, &TxMailbox);
-
-    	std::string CAN_label = "CAN data received:";
-    	std::string CAN_data1 = "data0: ";
-    	CAN_data1 += std::to_string(RxData[0]);
-    	std::string CAN_data2 = "data1: ";
-    	CAN_data2 += std::to_string(RxData[1]);
-    	lcd->writeString(0, 0, time_str.c_str(), Font_16x26, ILI9341_WHITE, ILI9341_BLACK);
-    	lcd->writeString(0, 80, CAN_label.c_str(), Font_16x26, ILI9341_WHITE, ILI9341_BLACK);
-    	lcd->writeString(0, 120, CAN_data1.c_str(), Font_16x26, ILI9341_WHITE, ILI9341_BLACK);
-    	lcd->writeString(0, 160, CAN_data2.c_str(), Font_16x26, ILI9341_WHITE, ILI9341_BLACK);
+    if(eApp == APP_SDCARD) {
+      vAppSDCard();
     }
   }
-  /* USER CODE END 3 */
-  delete rtc;
+  delete btn_ok;
+  delete btn_up;
+  delete btn_down;
+  delete btn_left;
+  delete btn_right;
+  delete btn_back;
   delete lcd;
-  delete jpgDec;
-  delete time;
+  delete file;
+  /* USER CODE END 3 */
+
   return 0;
 }
 
