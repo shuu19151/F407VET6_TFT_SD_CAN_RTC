@@ -42,7 +42,7 @@ void MX_CAN1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 extern uint8_t countCAN;
-extern uint8_t RxData[8];
+extern uint8_t CANRxData[8];
 extern CAN_TxHeaderTypeDef TxHeader;
 extern CAN_RxHeaderTypeDef RxHeader;
 /* USER CODE END Prototypes */

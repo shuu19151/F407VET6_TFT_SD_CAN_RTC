@@ -18,7 +18,7 @@ extern "C" {
 #define UART_BUFFER_SIZE 64
 
 typedef struct {
-  unsigned char buffer[UART_BUFFER_SIZE];
+  unsigned char msgBuffer[UART_BUFFER_SIZE];
   volatile unsigned int head;
   volatile unsigned int tail;
 } ring_buffer;
@@ -103,7 +103,7 @@ void Uart_isr (UART_HandleTypeDef *huart);
 //uint16_t Get_position (char *string);
 
 /* once you hit 'enter' (\r\n), it copies the entire string to the buffer*/
-//void Get_string (char *buffer);
+void Get_message(char *buffer);
 
 #ifdef __cplusplus
 }

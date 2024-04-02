@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string>
 #include "stm32f4xx.h"
 
 #ifdef __cplusplus
@@ -80,6 +81,7 @@ public:
   virtual ~DS3231();
   HAL_StatusTypeDef setDateTime(const Time_t* time);
   HAL_StatusTypeDef getDateTime(Time_t* time);
+  HAL_StatusTypeDef getStringDateTime(std::string& str);
 };
 
 #ifdef __cplusplus

@@ -73,6 +73,18 @@ HAL_StatusTypeDef DS3231::write(uint8_t reg, const uint8_t* data, uint8_t size) 
     return ret;
 }
 
+HAL_StatusTypeDef DS3231::getStringDateTime(std::string& str) {
+    Time_t t = {0};
+    HAL_StatusTypeDef ret = getDateTime(&t);
+    if(ret != HAL_OK) {
+        return ret;
+    }
+    char buf[10] = {0};
+    sprintf(buf, "%02d:%02d:%02d", t.Hour, t.Min, t.Sec);
+    str += buf;
+    return ret;
+}
+
 DS3231::~DS3231() {
 
 }

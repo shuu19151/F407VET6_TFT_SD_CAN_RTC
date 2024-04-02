@@ -55,7 +55,7 @@ void store_char(unsigned char c, ring_buffer *buffer) {
   // current location of the tail), we're about to overflow the buffer
   // and so we don't write the character or advance the head.
   if(i != buffer->tail) {
-    buffer->buffer[buffer->head] = c;
+    buffer->msgBuffer[buffer->head] = c;
     buffer->head = i;
   }
 }
@@ -100,7 +100,7 @@ int Uart_read(void) {
     return -1;
   }
   else {
-    unsigned char c = _rx_buffer->buffer[_rx_buffer->tail];
+    unsigned char c = _rx_buffer->msgBuffer[_rx_buffer->tail];
     _rx_buffer->tail = (unsigned int)(_rx_buffer->tail + 1) % UART_BUFFER_SIZE;
     return c;
   }
@@ -113,7 +113,7 @@ void Uart_write(int c) {
 		int i = (_tx_buffer->head + 1) % UART_BUFFER_SIZE;
 		while (i == _tx_buffer->tail);
 
-		_tx_buffer->buffer[_tx_buffer->head] = (uint8_t)c;
+		_tx_buffer->msgBuffer[_tx_buffer->head] = (uint8_t)c;
 		_tx_buffer->head = i;
 
 		__HAL_UART_ENABLE_IT(uart, UART_IT_TXE); // Enable UART transmission interrupt
@@ -193,7 +193,7 @@ repeat2:
 
 void Uart_flush (void)
 {
-	memset(_rx_buffer->buffer,'\0', UART_BUFFER_SIZE);
+	memset(_rx_buffer->msgBuffer,'\0', UART_BUFFER_SIZE);
 	_rx_buffer->head = 0;
 	_rx_buffer->tail = 0;
 }
@@ -206,7 +206,7 @@ int Uart_peek()
   }
   else
   {
-    return _rx_buffer->buffer[_rx_buffer->tail];
+    return _rx_buffer->msgBuffer[_rx_buffer->tail];
   }
 }
 
@@ -225,7 +225,7 @@ int Copy_upto (char *string, char *buffertocopyinto)
 again:
 	while (Uart_peek() != string[so_far])
 		{
-			buffertocopyinto[indx] = _rx_buffer->buffer[_rx_buffer->tail];
+			buffertocopyinto[indx] = _rx_buffer->msgBuffer[_rx_buffer->tail];
 			_rx_buffer->tail = (unsigned int)(_rx_buffer->tail + 1) % UART_BUFFER_SIZE;
 			indx++;
 			while (!IsDataAvailable());
@@ -353,7 +353,7 @@ void Uart_isr (UART_HandleTypeDef *huart)
     	 else
     	    {
     	      // There is more data in the output buffer. Send the next byte
-    	      unsigned char c = tx_buffer.buffer[tx_buffer.tail];
+    	      unsigned char c = tx_buffer.msgBuffer[tx_buffer.tail];
     	      tx_buffer.tail = (tx_buffer.tail + 1) % UART_BUFFER_SIZE;
 
     	      /******************
@@ -412,15 +412,12 @@ uint16_t Get_position (char *string)
 	}
   else return -1;
 }
+*/
 
-
-void Get_string (char *buffer)
-{
+void Get_message(char *buffer) {
 	int index=0;
-
-	while (_rx_buffer->tail>_rx_buffer->head)
-	{
-		if ((_rx_buffer->buffer[_rx_buffer->head-1] == '\n')||((_rx_buffer->head == 0) && (_rx_buffer->buffer[UART_BUFFER_SIZE-1] == '\n')))
+	while (_rx_buffer->tail>_rx_buffer->head) {
+		if ((_rx_buffer->msgBuffer[_rx_buffer->head-1] == '\n')||((_rx_buffer->head == 0) && (_rx_buffer->msgBuffer[UART_BUFFER_SIZE-1] == '\n')))
 			{
 				buffer[index] = Uart_read();
 				index++;
@@ -428,8 +425,7 @@ void Get_string (char *buffer)
 	}
 	unsigned int start = _rx_buffer->tail;
 	unsigned int end = (_rx_buffer->head);
-	if ((_rx_buffer->buffer[end-1] == '\n'))
-	{
+	if ((_rx_buffer->msgBuffer[end-1] == '\n')) {
 
 		for (unsigned int i=start; i<end; i++)
 		{
@@ -438,5 +434,4 @@ void Get_string (char *buffer)
 		}
 	}
 }
-*/
 

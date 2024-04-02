@@ -28,9 +28,12 @@ private:
     std::map<int, std::string> mFilesMap;
 public:
 	SDCard();
-    ~SDCard();
-    FRESULT writeToFile(const char* fileName, const std::string& fmt, ...);
-    UINT readTextFromFile(std::string fileName, std::string& data, UINT dataSize);
+    ~SDCard() {
+        f_mount(0, "", 0);
+        free(&file);
+    }
+    FRESULT writeToFile(const char* fileName, std::string& data);
+    UINT readTextFromFile(std::string fileName, std::string& data, UINT dataSize, UINT lineStart, UINT endLine);
     FRESULT makeDir(const char* dirName);
     FRESULT deleteFile(const char* fileName);
     FRESULT scanFiles(const char* pat, std::string& lf);

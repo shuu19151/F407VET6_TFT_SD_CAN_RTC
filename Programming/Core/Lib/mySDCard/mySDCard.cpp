@@ -25,7 +25,7 @@ SDCard::SDCard() {
     f_mount(&fs, (TCHAR*)"", 1);
 }
 
-FRESULT SDCard::writeToFile(const char* fileName, const std::string& fmt, ...) {
+FRESULT SDCard::writeToFile(const char* fileName, std::string& data) {
     FRESULT e;
     FILINFO stat;
     e = f_stat((TCHAR*)fileName, &stat);
@@ -33,62 +33,51 @@ FRESULT SDCard::writeToFile(const char* fileName, const std::string& fmt, ...) {
         // check if the file is already created, if not then create it
         e = f_open(&file, (TCHAR*)fileName, FA_CREATE_ALWAYS | FA_WRITE);
     } else {
-        // if it is already exist then open and append the data
+        // if it already exists, open and append the data
         e = f_open(&file, (TCHAR*)fileName, FA_OPEN_ALWAYS | FA_WRITE);
+        if (e == FR_OK) {
+            // Move the file pointer to the end of the file
+            f_lseek(&file, f_size(&file));
+        }
     }
     if(e != FR_OK) {
         f_close(&file);
         return e;
     }
-    va_list args, args_copy;
-    va_copy(args_copy, args);
-    int len = vsnprintf(NULL, 0, fmt.c_str(), args_copy);
-    va_end(args_copy);
-    if(len < 0) {
-        va_end(args);
-        f_close(&file);
-        return FR_INVALID_PARAMETER;
-    }
-    std::string dataStr(len, '\0');
-    vsnprintf(&dataStr[0], len + 1, fmt.c_str(), args);
-    UINT byteWritten;
-    f_lseek(&file, f_size(&file));
-    int writeResult = f_write(&file, dataStr.c_str(), dataStr.length(), &byteWritten);
-    if(writeResult != FR_OK) {
-        f_close(&file);
-        return FR_INVALID_PARAMETER;
-    }
-    va_end(args);
-    f_close(&file);
 
-    return e;
+    UINT bytesWritten;
+    e = f_write(&file, data.c_str(), data.length(), &bytesWritten);
+    if (e != FR_OK) {
+        f_close(&file);
+        return e;
+    }
+
+    f_close(&file);
+    return FR_OK;
 }
 
-UINT SDCard::readTextFromFile(std::string fileName, std::string& data, UINT dataSize) {
+UINT SDCard::readTextFromFile(std::string fileName, std::string& data, UINT dataSize, UINT startLine, UINT endLine) {
     UINT bytesRead = 0;
     BYTE buffer[256]; // Assuming maximum line length is 256 bytes
     UINT totalBytesRead = 0;
+    UINT currentLineNumber = 0;
 
-    // Open the file in read mode
-    if (f_open(&file, (TCHAR*)fileName.c_str(), FA_READ) == FR_OK) {
-        // Read lines from the file until the buffer is full or the end of the file is reached
+    if (f_open(&file, (TCHAR*)fileName.c_str(), FA_READ) == FR_OK) {    // Open the file in read mode
+        /* Read lines from the file until the buffer is full or the end of the file is reached */
         while ((f_gets((TCHAR*)buffer, sizeof(buffer), &file) != NULL) && (totalBytesRead < dataSize - 1)) {
-            UINT len = strlen((char*)buffer);
-            // Check if the buffer can hold the new line and a null terminator
-            if (totalBytesRead + len < dataSize - 1) {
-                // Append the line data to the provided string
-                data.append(reinterpret_cast<const char*>(buffer), len);
-                totalBytesRead += len;
-            } else {
-                // Not enough space in the buffer for the new line
-                break;
+            currentLineNumber++;
+            if (currentLineNumber >= startLine && currentLineNumber <= endLine) {
+                UINT len = strlen((char*)buffer);
+                if (totalBytesRead + len < dataSize - 1) {    // Check if the buffer can hold the new line and a null terminator
+                    data.append(reinterpret_cast<const char*>(buffer), len);    // Append the line data to the provided string
+                    totalBytesRead += len;
+                } else { break;    // Not enough space in the buffer for the new line
+                }
             }
         }
         bytesRead = totalBytesRead;
-
         f_close(&file);
     }
-
     return bytesRead;
 }
 

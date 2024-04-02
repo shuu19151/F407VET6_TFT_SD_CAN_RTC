@@ -8,19 +8,19 @@
 
 * The device can handle difference applications, now I only focus on SD card reader application:
 ## Application selection menu:
-![image](Photo/09.jpg)
+![image](Photo/10.jpg)
 
 ---
-### Root folder:
+### [SD card browser] Root folder:
 ![image](Photo/11.jpg)
 
 ---
 ### The app can handle unlimit sub-folder, can read text and show JPEG image folder/subfolder:
 
 Sub-folder:
-![image](Photo/10.jpg)
+![image](Photo/16.jpg)
 subsub-folder:
-![image](Photo/07.jpg)
+![image](Photo/17.jpg)
 
 ---
 Showing JPEG image:
@@ -34,14 +34,22 @@ Reading text, use navigate button to see the rest of the text:
 ![image](Photo/05.jpg)
 
 ---
-# Test with CANBus (loopback) & RTC:
+# Test with CANBus (loopback mode) & RTC:
 
-![image](Photo/01.jpg)
-
----
-
-![image](Photo/02.jpg)
+![image](Photo/09.jpg)
 
 ---
 
-![image](Photo/03.jpg)
+The CANBus app will create a file in SD card:
+![image](Photo/13.jpg)
+
+---
+
+The file in SD card can be delete with hitting button LEFT,
+then user can choose to delete (hit button LEFT again) or cancel (press button RIGHT).
+![image](Photo/14.jpg)
+
+---
+
+Data logged inside the file:
+![image](Photo/15.jpg)
